@@ -1,0 +1,512 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Suburb Shooter</title>
+<style>
+  /* Reset and basic styling */
+  * {
+    box-sizing: border-box;
+  }
+  body, html {
+    margin:0; padding:0; overflow:hidden;
+    background: linear-gradient(#cfe6f2,#8fb3c2);
+    font-family: Arial, sans-serif;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+    height: 100vh;
+    position: relative;
+  }
+  canvas {
+    display: block;
+    background: #99b3c6;
+    width: 100vw;
+    height: 100vh;
+  }
+  /* HUD */
+  #hud {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    color: white;
+    text-shadow: 0 1px 3px #0008;
+    font-weight: bold;
+    font-size: 18px;
+    z-index: 10;
+  }
+  /* Buttons container */
+  #controls {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    z-index: 20;
+  }
+  button {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.35);
+    border: none;
+    color: white;
+    font-weight: bold;
+    font-size: 18px;
+    user-select:none;
+    -webkit-user-select:none;
+    touch-action:none;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+  }
+  button:active {
+    background: rgba(255,0,0,0.7);
+  }
+  /* Move joystick container bottom left */
+  #joystickContainer {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    width: 120px;
+    height: 120px;
+    background: rgba(0,0,0,0.15);
+    border-radius: 60px;
+    touch-action:none;
+    user-select:none;
+    -webkit-user-select:none;
+    z-index: 20;
+  }
+  #joystick {
+    position: absolute;
+    background: rgba(255,255,255,0.5);
+    width: 60px;
+    height: 60px;
+    border-radius: 30px;
+    top: 30px;
+    left: 30px;
+    touch-action:none;
+  }
+  /* Center message */
+  #centerMessage {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    user-select:none;
+    -webkit-user-select:none;
+    text-shadow: 0 0 8px black;
+    display: none;
+    z-index: 50;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="hud">HP: 100 | Ammo: 12 | Score: 0</div>
+
+<div id="joystickContainer">
+  <div id="joystick"></div>
+</div>
+
+<div id="controls">
+  <button id="jumpBtn">JUMP</button>
+  <button id="shootBtn">SHOOT</button>
+  <button id="reloadBtn">RELOAD</button>
+</div>
+
+<div id="centerMessage"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const hud = document.getElementById('hud');
+  const jumpBtn = document.getElementById('jumpBtn');
+  const shootBtn = document.getElementById('shootBtn');
+  const reloadBtn = document.getElementById('reloadBtn');
+  const centerMsg = document.getElementById('centerMessage');
+  const joystickContainer = document.getElementById('joystickContainer');
+  const joystick = document.getElementById('joystick');
+
+  let W, H;
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W;
+    canvas.height = H;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // Game state
+  let lastTime = 0;
+  let running = true;
+  let score = 0;
+
+  // Player state
+  const player = {
+    x: W / 2,
+    y: H / 2,
+    r: 20,
+    speed: 250,
+    angle: 0,
+    hp: 100,
+    maxHp: 100,
+    ammo: 12,
+    maxAmmo: 12,
+    reloadTime: 2.5,
+    reloading: 0,
+    fireRate: 0.2,
+    fireTimer: 0,
+    jumping: false,
+    jumpY: 0,
+    jumpHeight: 80,
+    jumpSpeed: 400,
+    jumpVel: 0
+  };
+
+  // Movement joystick variables
+  let joystickPointerId = null;
+  let joystickStart = { x: 0, y: 0 };
+  let joystickPos = { x: 0, y: 0 };
+  let joystickDir = { x: 0, y: 0 };
+
+  // Shoot / jump button states
+  let shooting = false;
+  let jumping = false;
+  let reloadPressed = false;
+
+  // Input handling for joystick
+  joystickContainer.addEventListener('touchstart', e => {
+    for (const touch of e.changedTouches) {
+      if (joystickPointerId === null) {
+        joystickPointerId = touch.identifier;
+        joystickStart.x = touch.clientX;
+        joystickStart.y = touch.clientY;
+        joystickPos.x = touch.clientX;
+        joystickPos.y = touch.clientY;
+        updateJoystick();
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  joystickContainer.addEventListener('touchmove', e => {
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === joystickPointerId) {
+        joystickPos.x = touch.clientX;
+        joystickPos.y = touch.clientY;
+        updateJoystick();
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  joystickContainer.addEventListener('touchend', e => {
+    for (const touch of e.changedTouches) {
+      if (touch.identifier === joystickPointerId) {
+        joystickPointerId = null;
+        joystickPos.x = joystickStart.x;
+        joystickPos.y = joystickStart.y;
+        joystickDir.x = 0;
+        joystickDir.y = 0;
+        updateJoystick();
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  // Update joystick visual and direction vector
+  function updateJoystick() {
+    const dx = joystickPos.x - joystickStart.x;
+    const dy = joystickPos.y - joystickStart.y;
+    const maxDist = 40;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > maxDist) {
+      const scale = maxDist / dist;
+      joystickPos.x = joystickStart.x + dx * scale;
+      joystickPos.y = joystickStart.y + dy * scale;
+      dist = maxDist;
+    }
+    joystick.style.transform = `translate(${joystickPos.x - joystickStart.x}px, ${joystickPos.y - joystickStart.y}px)`;
+
+    if (dist < 10) {
+      joystickDir.x = 0;
+      joystickDir.y = 0;
+    } else {
+      joystickDir.x = dx / maxDist;
+      joystickDir.y = dy / maxDist;
+    }
+  }
+
+  // Button event handlers
+  shootBtn.addEventListener('touchstart', e => { shooting = true; e.preventDefault(); }, { passive:false });
+  shootBtn.addEventListener('touchend', e => { shooting = false; e.preventDefault(); }, { passive:false });
+  shootBtn.addEventListener('mousedown', e => { shooting = true; });
+  shootBtn.addEventListener('mouseup', e => { shooting = false; });
+
+  jumpBtn.addEventListener('touchstart', e => { jumping = true; e.preventDefault(); }, { passive:false });
+  jumpBtn.addEventListener('touchend', e => { jumping = false; e.preventDefault(); }, { passive:false });
+  jumpBtn.addEventListener('mousedown', e => { jumping = true; });
+  jumpBtn.addEventListener('mouseup', e => { jumping = false; });
+
+  reloadBtn.addEventListener('click', e => {
+    if (player.ammo < player.maxAmmo && player.reloading <= 0) {
+      player.reloading = player.reloadTime;
+    }
+  });
+
+  // Bullets and enemies lists
+  const bullets = [];
+  const enemies = [];
+  const particles = [];
+
+  // Helper funcs
+  function clamp(v, min, max) {
+    return Math.min(Math.max(v, min), max);
+  }
+  function dist(x1, y1, x2, y2) {
+    return Math.hypot(x1 - x2, y1 - y2);
+  }
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
+
+  // Spawn enemy function
+  let enemySpawnTimer = 0;
+  function spawnEnemy() {
+    const edge = Math.floor(rand(0, 4));
+    let x, y;
+    if (edge === 0) { x = -30; y = rand(0, H); }
+    if (edge === 1) { x = W + 30; y = rand(0, H); }
+    if (edge === 2) { x = rand(0, W); y = -30; }
+    if (edge === 3) { x = rand(0, W); y = H + 30; }
+    const e = {
+      x, y,
+      r: 18 + rand(0, 8),
+      hp: 30 + rand(0, 30),
+      maxHp: 0,
+      speed: 60 + rand(0, 50),
+      color: '#2d2f33',
+      onGround: true,
+      jumpCooldown: 0
+    };
+    e.maxHp = e.hp;
+    enemies.push(e);
+  }
+
+  // Shoot bullet function
+  function shootBullet() {
+    if (player.reloading > 0) return;
+    if (player.ammo <= 0) {
+      player.reloading = player.reloadTime;
+      return;
+    }
+    if (player.fireTimer > 0) return;
+    player.fireTimer = player.fireRate;
+    player.ammo--;
+
+    // Shoot bullet straight in player's facing direction
+    const angle = player.angle;
+    const b = {
+      x: player.x + Math.cos(angle) * (player.r + 8),
+      y: player.y + Math.sin(angle) * (player.r + 8),
+      vx: Math.cos(angle) * 900,
+      vy: Math.sin(angle) * 900,
+      life: 0.8,
+      dmg: 28
+    };
+    bullets.push(b);
+
+    // Small recoil (knock player back a bit)
+    player.x -= Math.cos(angle) * 4;
+    player.y -= Math.sin(angle) * 4;
+  }
+
+  // Blood particles splatter
+  function splatter(x, y, amount) {
+    for (let i = 0; i < amount; i++) {
+      particles.push({
+        x, y,
+        vx: rand(-180, 180),
+        vy: rand(-180, 180),
+        life: rand(0.4, 0.9),
+        size: rand(2, 5),
+        color: 'rgba(200,18,18,1)'
+      });
+    }
+  }
+
+  // Game loop
+  function update(time) {
+    if (!lastTime) lastTime = time;
+    const dt = Math.min((time - lastTime) / 1000, 0.05);
+    lastTime = time;
+
+    if (!running) {
+      draw();
+      requestAnimationFrame(update);
+      return;
+    }
+
+    // Move player based on joystick
+    player.x += joystickDir.x * player.speed * dt;
+    player.y += joystickDir.y * player.speed * dt;
+    player.x = clamp(player.x, player.r, W - player.r);
+    player.y = clamp(player.y, player.r, H - player.r);
+
+    // Player angle faces mouse or right joystick (for simplicity just mouse/finger right half)
+    if (lastPointer) {
+      player.angle = Math.atan2(lastPointer.y - player.y, lastPointer.x - player.x);
+    }
+
+    // Shooting
+    if (shooting) shootBullet();
+
+    // Reload timer
+    if (player.reloading > 0) {
+      player.reloading -= dt;
+      if (player.reloading <= 0) {
+        player.reloading = 0;
+        player.ammo = player.maxAmmo;
+      }
+    }
+
+    // Fire timer
+    if (player.fireTimer > 0) player.fireTimer -= dt;
+
+    // Jumping mechanics
+    if (!player.jumping && jumping && player.y >= H - player.r) {
+      player.jumping = true;
+      player.jumpVel = -player.jumpSpeed;
+    }
+    if (player.jumping) {
+      player.jumpVel += 1500 * dt; // gravity
+      player.y += player.jumpVel * dt;
+      if (player.y >= H - player.r) {
+        player.y = H - player.r;
+        player.jumping = false;
+        player.jumpVel = 0;
+      }
+    }
+
+    // Bullets update
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+      if (b.life <= 0 || b.x < -50 || b.x > W + 50 || b.y < -50 || b.y > H + 50) {
+        bullets.splice(i, 1);
+        continue;
+      }
+      // Collision with enemies
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const e = enemies[j];
+        if (dist(b.x, b.y, e.x, e.y) < e.r) {
+          e.hp -= b.dmg;
+          splatter(b.x, b.y, 6);
+          bullets.splice(i, 1);
+          if (e.hp <= 0) {
+            score += 10;
+            splatter(e.x, e.y, 18);
+            enemies.splice(j, 1);
+          }
+          break;
+        }
+      }
+    }
+
+    // Enemies update
+    enemySpawnTimer -= dt;
+    if (enemySpawnTimer <= 0) {
+      enemySpawnTimer = Math.max(0.6, 1.5 - Math.min(1.2, score / 80));
+      spawnEnemy();
+    }
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const e = enemies[i];
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const distToPlayer = Math.hypot(dx, dy);
+
+      // Enemy moves toward player
+      if (distToPlayer > 2) {
+        e.x += (dx / distToPlayer) * e.speed * dt;
+        e.y += (dy / distToPlayer) * e.speed * dt;
+      }
+
+      // Enemy attack
+      if (distToPlayer < e.r + player.r + 6) {
+        player.hp -= 22 * dt;
+        // Knockback
+        const kb = 18 * dt;
+        player.x += -dx / distToPlayer * kb;
+        player.y += -dy / distToPlayer * kb;
+        if (player.hp <= 0) {
+          player.hp = 0;
+          running = false;
+          centerMsg.style.display = 'block';
+          centerMsg.innerHTML = 'GAME OVER<br>Score: ' + score + '<br><button id="restartBtn">Restart</button>';
+          document.getElementById('restartBtn').addEventListener('click', () => {
+            resetGame();
+            centerMsg.style.display = 'none';
+          });
+        }
+      }
+    }
+
+    // Particles update
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      p.vx *= 0.98;
+      p.vy *= 0.98;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    draw();
+    requestAnimationFrame(update);
+  }
+
+  // Draw everything
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Ground grid for suburb effect
+    const tile = 64;
+    ctx.save();
+    for (let y = 0; y < H; y += tile) {
+      for (let x = 0; x < W; x += tile) {
+        const shade = ((x + y) / tile) % 2 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)';
+        ctx.fillStyle = shade;
+        ctx.fillRect(x, y, tile, tile);
+      }
+    }
+    ctx.restore();
+
+    // Houses silhouette
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#000';
+    for (let i = 0; i < 6; i++) {
+      ctx.fillRect(i * W / 6, H * 0.18 + (i % 3) * 18, W / 6 - 8, H * 0.14);
+    }
+    ctx.restore();
+
+    // Draw bullets
+    for (const b of bullets) {
+      ctx.fillStyle = '#ffd';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Draw particles (
